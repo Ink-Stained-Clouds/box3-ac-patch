@@ -65,9 +65,11 @@ function coallesceTargets() {
             if (x.id !== head.id) {
                 break;
             }
+            if (x.authority) {
+                head.authority = true;
+            }
             accumTarget(head, x);
             NetCorrectionTargetSchema.free(x);
-            head.authority = false;
             ptr++;
         }
         // 加完后按比例又✖️回来了
@@ -118,19 +120,43 @@ function handlePlayerInput(clientInput, input) {
     input.angle = inputAngle;
     input.pitch = inputPitch;
     input.cameraAngle = inputCameraAngle;
-    // 只接受自己的刚体校正。原逻辑允许客户端提交任意 body id（weight 0.25），
-    // 外挂可把所有玩家的位置/速度写进 input.bodies，全图被一起拽走。
+    // 自己的刚体 weight=1 有权威；别人的 0.25 叠进去做延迟/对向碰撞容错。
+    // 把人拽飞的包在 dropFarPeerTargets 里丢掉，不参与叠。
     for (let i = 0; i < bodies.length; ++i) {
         const inputBody = bodies[i];
-        if (inputBody.id !== clientInput.id) {
-            continue;
-        }
         const target = NetCorrectionTargetSchema.alloc();
         net_schema_1.NetPositionCorrectionSchema.assign(target, inputBody);
-        target.weight = 1;
-        target.authority = true;
+        if (inputBody.id === clientInput.id) {
+            target.weight = 1;
+            target.authority = true;
+        }
+        else {
+            target.weight = 0.25;
+            target.authority = false;
+        }
         NET_TARGETS.push(target);
     }
+}
+const MAX_PEER_DELTA2 = 9;
+function dropFarPeerTargets(bodies) {
+    let w = 0;
+    for (let i = 0; i < NET_TARGETS.length; ++i) {
+        const target = NET_TARGETS[i];
+        if (!target.authority) {
+            const body = (0, id_1.getById)(bodies, target.id);
+            if (body) {
+                const dx = target.px - body.px;
+                const dy = target.py - body.py;
+                const dz = target.pz - body.pz;
+                if (dx * dx + dy * dy + dz * dz > MAX_PEER_DELTA2) {
+                    NetCorrectionTargetSchema.free(target);
+                    continue;
+                }
+            }
+        }
+        NET_TARGETS[w++] = target;
+    }
+    NET_TARGETS.length = w;
 }
 function applyPositionCorrection(targets, bodies, predictedBodies) {
     let bodyLo = 0;
@@ -232,7 +258,8 @@ function netTick(netState, netInput, blockIndex, collision, contact, zoneIndex, 
         // 每一个有输入的客户端都算一遍
         (0, id_1.zipId)(handlePlayerInput, netInput.clients, netState.playerInputs);
     }
-    // 相同ID按比例合并数据
+    dropFarPeerTargets(netState.bodies);
+    // 相同ID按比例合并数据（自己的权威校正不会被同伴包抢走）
     coallesceTargets();
     // apply player input forces
     (0, player_move_1.applyPlayerInputForces)(netState.bodies, netState.players, netState.playerInputs, 1, netState.physics.velocityDamping, netState.physics.gravity);
@@ -293,17 +320,6 @@ function mergeNetInput(input, id, clientInput, allowBodyUpdates) {
     }
     if (allowBodyUpdates) {
         net_schema_1.NetClientInputSchema.assign(entry.input, clientInput);
-        const bodies = entry.input.bodies;
-        let w = 0;
-        for (let i = 0; i < bodies.length; ++i) {
-            if (bodies[i].id === id) {
-                bodies[w++] = bodies[i];
-            }
-            else {
-                net_schema_1.NetPositionCorrectionSchema.free(bodies[i]);
-            }
-        }
-        bodies.length = w;
     }
     else {
         entry.input.inputAngle = clientInput.inputAngle;

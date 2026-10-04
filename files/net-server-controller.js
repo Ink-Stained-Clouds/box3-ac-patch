@@ -314,13 +314,10 @@ class NetServer {
                         if (connection.id && nextInput && nextInput.input) {
                             loadLokiBans(this._state);
                             const inspect = inspectLokiInput(this._state, connection.id, nextInput.input);
-                            if (inspect.foreign > 0) {
-                                const kick = inspect.farPlayers >= 1;
-                                reportLoki(this._state, this._logger, sessionId, connection, inspect, kick);
-                                if (kick) {
-                                    this.kickSession(sessionId);
-                                    return;
-                                }
+                            if (inspect.farPlayers >= 1) {
+                                reportLoki(this._state, this._logger, sessionId, connection, inspect, true);
+                                this.kickSession(sessionId);
+                                return;
                             }
                         }
                         if (!synchronizeNetClientInput(this._state, sessionId, nextInput, this._logger)) {
