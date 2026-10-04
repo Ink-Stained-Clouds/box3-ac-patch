@@ -1,5 +1,7 @@
 # box3-ac-patch
 
+本仓库仅供学习、研究参考。是否使用、如何使用均为个人行为，作者不对任何直接或间接损失承担责任。
+
 BOX Local Engine（v0.2.0）反外挂补丁。用 **compose overlay + bind-mount** 盖住镜像里的两个 JS 文件，不改数据卷。
 
 引擎升级会换镜像、覆盖 `compose.yml`，但只要再跑一次 `apply.sh`，补丁会重新挂上去。
