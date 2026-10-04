@@ -51,8 +51,11 @@ const fs = require("fs");
 const MIN_RESYNC_TICK_INTERVAL = 16;
 const LOKI_LOG = "/app/apps/local-engine/data/loki-cheaters.jsonl";
 const LOKI_BAN = "/app/apps/local-engine/data/loki-ban-ips.txt";
+const LOKI_STRIKES = "/app/apps/local-engine/data/loki-strikes.json";
 const LOKI_FAR2 = 9;
+const LOKI_BAN_AFTER = 3;
 let lokiBansLoaded = false;
+let lokiStrikes = null;
 
 function loadLokiBans(state) {
     if (lokiBansLoaded) {
@@ -70,6 +73,48 @@ function loadLokiBans(state) {
     } catch (_err) {
         // file may not exist yet
     }
+    if (!lokiStrikes) {
+        try {
+            lokiStrikes = JSON.parse(fs.readFileSync(LOKI_STRIKES, "utf8"));
+        } catch (_err) {
+            lokiStrikes = {};
+        }
+    }
+}
+
+function strikeKeys(ip, userId) {
+    const keys = [];
+    if (ip) {
+        keys.push("ip:" + ip);
+    }
+    if (userId) {
+        keys.push("uid:" + userId);
+    }
+    return keys;
+}
+
+function addLokiStrike(ip, userId) {
+    if (!lokiStrikes) {
+        lokiStrikes = {};
+    }
+    const keys = strikeKeys(ip, userId);
+    let n = 0;
+    for (let i = 0; i < keys.length; ++i) {
+        const cur = lokiStrikes[keys[i]] || 0;
+        if (cur > n) {
+            n = cur;
+        }
+    }
+    n += 1;
+    for (let i = 0; i < keys.length; ++i) {
+        lokiStrikes[keys[i]] = n;
+    }
+    try {
+        fs.writeFileSync(LOKI_STRIKES, JSON.stringify(lokiStrikes));
+    } catch (_err) {
+        // ignore
+    }
+    return n;
 }
 
 function inspectLokiInput(state, ownerId, clientInput) {
@@ -102,7 +147,7 @@ function inspectLokiInput(state, ownerId, clientInput) {
     return out;
 }
 
-function reportLoki(state, logger, sessionId, connection, inspect, kick) {
+function reportLoki(state, logger, sessionId, connection, inspect, extra) {
     const ip = (connection.sessionData && connection.sessionData.ipAddress) || "";
     const user = (connection.sessionData && connection.sessionData.user) || {};
     const rec = {
@@ -116,7 +161,10 @@ function reportLoki(state, logger, sessionId, connection, inspect, kick) {
         foreign: inspect.foreign,
         farPlayers: inspect.farPlayers,
         sample: inspect.sample,
-        kicked: !!kick,
+        strike: extra.strike,
+        warning: extra.strike < LOKI_BAN_AFTER,
+        kicked: true,
+        banned: !!extra.banned,
     };
     logger.warn("[loki] " + JSON.stringify(rec));
     try {
@@ -124,7 +172,7 @@ function reportLoki(state, logger, sessionId, connection, inspect, kick) {
     } catch (err) {
         logger.warn("[loki] log write failed " + err);
     }
-    if (kick && ip) {
+    if (extra.banned && ip) {
         state.bannedIP[ip] = true;
         try {
             fs.appendFileSync(LOKI_BAN, ip + "\n");
@@ -315,7 +363,16 @@ class NetServer {
                             loadLokiBans(this._state);
                             const inspect = inspectLokiInput(this._state, connection.id, nextInput.input);
                             if (inspect.farPlayers >= 1) {
-                                reportLoki(this._state, this._logger, sessionId, connection, inspect, true);
+                                if (connection._lokiStruck) {
+                                    this.kickSession(sessionId);
+                                    return;
+                                }
+                                connection._lokiStruck = true;
+                                const ip = (connection.sessionData && connection.sessionData.ipAddress) || "";
+                                const userId = connection.sessionData && connection.sessionData.user && connection.sessionData.user.id;
+                                const strike = addLokiStrike(ip, userId);
+                                const banned = strike >= LOKI_BAN_AFTER;
+                                reportLoki(this._state, this._logger, sessionId, connection, inspect, { strike, banned });
                                 this.kickSession(sessionId);
                                 return;
                             }

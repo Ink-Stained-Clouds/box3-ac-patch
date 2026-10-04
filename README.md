@@ -13,7 +13,7 @@ BOX Local Engine（v0.2.0）反外挂补丁。用 **compose overlay + bind-mount
 补丁：
 
 1. `net-tick.js`：同伴近距离校正仍按 0.25 权重叠进去（延迟、对向跑步、瞬间穿模容错）。超过约 3 格的拽人包丢掉，且自己的权威校正不会被别人抢走。
-2. `net-server-controller.js`：把其他玩家拽走超过约 3 格则记 IP、踢人、写入 ban 名单。
+2. `net-server-controller.js`：把其他玩家拽走超过约 3 格则踢出。前两次记警告，第三次封 IP。同一连接只计一次，重进再犯才加警告。
 
 不限制自己的移动速度。
 
