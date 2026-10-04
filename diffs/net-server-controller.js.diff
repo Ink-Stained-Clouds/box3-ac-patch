@@ -1,0 +1,123 @@
+--- a/net-server-controller.js
++++ b/net-server-controller.js
+@@ -46,7 +46,93 @@
+ 
+ const pending_player_joins_1 = require("../player/pending-player-joins");
+ 
++const fs = require("fs");
++
+ const MIN_RESYNC_TICK_INTERVAL = 16;
++const LOKI_LOG = "/app/apps/local-engine/data/loki-cheaters.jsonl";
++const LOKI_BAN = "/app/apps/local-engine/data/loki-ban-ips.txt";
++const LOKI_FAR2 = 9;
++let lokiBansLoaded = false;
++
++function loadLokiBans(state) {
++    if (lokiBansLoaded) {
++        return;
++    }
++    lokiBansLoaded = true;
++    try {
++        const lines = fs.readFileSync(LOKI_BAN, "utf8").split("\n");
++        for (let i = 0; i < lines.length; ++i) {
++            const ip = lines[i].trim();
++            if (ip) {
++                state.bannedIP[ip] = true;
++            }
++        }
++    } catch (_err) {
++        // file may not exist yet
++    }
++}
++
++function inspectLokiInput(state, ownerId, clientInput) {
++    const bodies = clientInput && clientInput.bodies;
++    const out = { foreign: 0, farPlayers: 0, sample: [] };
++    if (!bodies) {
++        return out;
++    }
++    for (let i = 0; i < bodies.length; ++i) {
++        const b = bodies[i];
++        if (b.id === ownerId) {
++            continue;
++        }
++        out.foreign += 1;
++        const player = (0, id_1.getById)(state.players, b.id);
++        const serverBody = (0, id_1.getById)(state.bodies, b.id);
++        if (player && serverBody) {
++            const dx = b.px - serverBody.px;
++            const dy = b.py - serverBody.py;
++            const dz = b.pz - serverBody.pz;
++            const d2 = dx * dx + dy * dy + dz * dz;
++            if (d2 > LOKI_FAR2) {
++                out.farPlayers += 1;
++                if (out.sample.length < 8) {
++                    out.sample.push({ id: b.id, d: Math.round(Math.sqrt(d2) * 100) / 100 });
++                }
++            }
++        }
++    }
++    return out;
++}
++
++function reportLoki(state, logger, sessionId, connection, inspect, kick) {
++    const ip = (connection.sessionData && connection.sessionData.ipAddress) || "";
++    const user = (connection.sessionData && connection.sessionData.user) || {};
++    const rec = {
++        t: Date.now(),
++        kind: inspect.farPlayers ? "loki-killaura" : "loki-foreign-bodies",
++        sessionId,
++        userId: user.id,
++        userKey: user.userKey,
++        name: connection.sessionData && connection.sessionData.name,
++        ip,
++        foreign: inspect.foreign,
++        farPlayers: inspect.farPlayers,
++        sample: inspect.sample,
++        kicked: !!kick,
++    };
++    logger.warn("[loki] " + JSON.stringify(rec));
++    try {
++        fs.appendFileSync(LOKI_LOG, JSON.stringify(rec) + "\n");
++    } catch (err) {
++        logger.warn("[loki] log write failed " + err);
++    }
++    if (kick && ip) {
++        state.bannedIP[ip] = true;
++        try {
++            fs.appendFileSync(LOKI_BAN, ip + "\n");
++        } catch (_err) {
++            // ignore
++        }
++    }
++}
+ 
+ function computeNetPublic(state, netState) {
+     const result = net_schema_2.NetPublicSchema.alloc();
+@@ -148,6 +234,7 @@
+         this._pendingPlayerJoins = new pending_player_joins_1.PendingPlayerJoins;
+         this._socketServer = spec.server._socketServer;
+         this._state = spec.state;
++        loadLokiBans(this._state);
+         this._hotProject = spec.hotProject;
+         this._state.net.zoneIndex = new zone_index_1.PhysicsZoneIndex;
+         const logger = this._logger = this._state.logger.create("net");
+@@ -224,6 +311,18 @@
+                     }
+                     const netConnection = connection.net;
+                     if (!netConnection.statePaused) {
++                        if (connection.id && nextInput && nextInput.input) {
++                            loadLokiBans(this._state);
++                            const inspect = inspectLokiInput(this._state, connection.id, nextInput.input);
++                            if (inspect.foreign > 0) {
++                                const kick = inspect.farPlayers >= 1;
++                                reportLoki(this._state, this._logger, sessionId, connection, inspect, kick);
++                                if (kick) {
++                                    this.kickSession(sessionId);
++                                    return;
++                                }
++                            }
++                        }
+                         if (!synchronizeNetClientInput(this._state, sessionId, nextInput, this._logger)) {
+                             netConnection.inputPauseCounter += 1;
+                         }

@@ -1,0 +1,48 @@
+--- a/net-tick.js
++++ b/net-tick.js
+@@ -118,20 +118,17 @@
+     input.angle = inputAngle;
+     input.pitch = inputPitch;
+     input.cameraAngle = inputCameraAngle;
+-    // push all the correction terms into the queue
++    // 只接受自己的刚体校正。原逻辑允许客户端提交任意 body id（weight 0.25），
++    // 外挂可把所有玩家的位置/速度写进 input.bodies，全图被一起拽走。
+     for (let i = 0; i < bodies.length; ++i) {
+         const inputBody = bodies[i];
++        if (inputBody.id !== clientInput.id) {
++            continue;
++        }
+         const target = NetCorrectionTargetSchema.alloc();
+         net_schema_1.NetPositionCorrectionSchema.assign(target, inputBody);
+-        // 表示当前用户的物理模型，就有authority了，weight也等于1了
+-        if (inputBody.id === clientInput.id) {
+-            target.weight = 1;
+-            target.authority = true;
+-        }
+-        else {
+-            target.weight = 0.25;
+-            target.authority = false;
+-        }
++        target.weight = 1;
++        target.authority = true;
+         NET_TARGETS.push(target);
+     }
+ }
+@@ -296,6 +293,17 @@
+     }
+     if (allowBodyUpdates) {
+         net_schema_1.NetClientInputSchema.assign(entry.input, clientInput);
++        const bodies = entry.input.bodies;
++        let w = 0;
++        for (let i = 0; i < bodies.length; ++i) {
++            if (bodies[i].id === id) {
++                bodies[w++] = bodies[i];
++            }
++            else {
++                net_schema_1.NetPositionCorrectionSchema.free(bodies[i]);
++            }
++        }
++        bodies.length = w;
+     }
+     else {
+         entry.input.inputAngle = clientInput.inputAngle;

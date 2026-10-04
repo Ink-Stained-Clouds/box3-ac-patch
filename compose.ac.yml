@@ -1,0 +1,17 @@
+# Overlay: bind-mount AC files over the engine image.
+# Engine upgrades replace the image but not these mounts, as long as this
+# file is still passed to docker compose.
+#
+#   docker compose -f compose.yml -f compose.ac.yml up -d creator play
+#
+# Paths inside the container are for box-local-engine v0.2.0.
+
+services:
+  creator:
+    volumes:
+      - ./patches/net-tick.js:/app/services/game-server/node_modules/.pnpm/@box+schema@file+..+..+internals+schema/node_modules/@box/schema/build/net/net-tick.js:ro
+      - ./patches/net-server-controller.js:/app/services/game-server/dist/src/net/net-server-controller.js:ro
+  play:
+    volumes:
+      - ./patches/net-tick.js:/app/services/game-server/node_modules/.pnpm/@box+schema@file+..+..+internals+schema/node_modules/@box/schema/build/net/net-tick.js:ro
+      - ./patches/net-server-controller.js:/app/services/game-server/dist/src/net/net-server-controller.js:ro
